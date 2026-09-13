@@ -26,8 +26,9 @@ export def fixture [] {
 				'
 				'unreachable.js': 'import fs from "node:fs"; export default fs;'
 				'identity.js': 'export const identity = {};'
-				'index.d.ts': 'export { identity } from "./identity.js"; export declare const value: () => number;'
-				'identity.d.ts': 'export declare const identity: object;'
+				'index.d.ts': 'export { identity } from "./identity.ts"; export declare const value: () => number;'
+				'identity.d.ts': 'export declare const identity: import("./marker.mts").Identity;'
+				'marker.d.mts': 'export type Identity = object;'
 				'fallback.js': 'export { identity } from "#identity"; export const value = () => 43;'
 			}
 			beta: {

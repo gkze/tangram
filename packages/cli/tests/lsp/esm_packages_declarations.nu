@@ -10,7 +10,8 @@ let root = artifact {
 	node_modules: {alpha: {
 		'package.json': '{"name":"alpha","type":"module","exports":{"types":"./one.d.ts","default":"./index.js"}}'
 		'index.js': 'export const value = 1;'
-		'one.d.ts': 'export declare const value: number;'
+		'one.d.ts': 'export { value } from "./value.ts";'
+		'value.d.ts': 'export declare const value: number;'
 		'two.d.ts': 'export declare const value: string;'
 	}}
 }
@@ -24,7 +25,7 @@ $session = lsp send_all $session [(lsp initialized) (lsp did_open $uri $source) 
 let first = lsp wait_response $session 2
 assert equal $first.message.result.items []
 $session = $first.session
-'export declare const value: string;' | save --force ($root | path join node_modules alpha one.d.ts)
+'export declare const value: string;' | save --force ($root | path join node_modules alpha value.d.ts)
 $session = lsp send $session (lsp diagnostics 3 $uri)
 let second = lsp wait_response $session 3
 snapshot $second.message.result r#'

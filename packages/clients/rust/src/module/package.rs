@@ -175,6 +175,14 @@ impl Scope {
 				vec![
 					(".js".into(), vec![".d.ts".into(), ".js".into()]),
 					(".mjs".into(), vec![".d.mts".into(), ".mjs".into()]),
+					(
+						".mts".into(),
+						vec![".mts".into(), ".d.mts".into(), ".mjs".into()],
+					),
+					(
+						".ts".into(),
+						vec![".ts".into(), ".d.ts".into(), ".js".into()],
+					),
 				]
 			} else {
 				Vec::new()
@@ -430,6 +438,37 @@ mod tests {
 		scope
 			.resolve(&path, &import)?
 			.ok_or_else(|| tg::error!("expected a package import"))
+	}
+
+	#[test]
+	fn typescript_declaration_extensions() {
+		let directory = fixture();
+		let root = directory.path().canonicalize().unwrap();
+		for (extension, target) in [("ts", "d.ts"), ("mts", "d.mts")] {
+			let path = format!("node_modules/alpha/value.{target}");
+			write(&root, &path, "export declare const value: number;");
+			let specifier = format!("./value.{extension}");
+			let referrer = "node_modules/alpha/index.d.ts";
+			assert_eq!(
+				resolve(&root, referrer, &specifier, true).unwrap().path,
+				root.join(&path)
+			);
+			assert!(resolve(&root, referrer, &specifier, false).is_err());
+		}
+		for extension in ["cts", "cjs", "d.cts"] {
+			write(&root, &format!("node_modules/alpha/value.{extension}"), "");
+			for types in [false, true] {
+				assert!(
+					resolve(
+						&root,
+						"node_modules/alpha/index.d.ts",
+						&format!("./value.{extension}"),
+						types
+					)
+					.is_err()
+				);
+			}
+		}
 	}
 
 	#[test]
