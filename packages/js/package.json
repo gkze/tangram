@@ -3,10 +3,12 @@
 	"private": true,
 	"type": "module",
 	"scripts": {
-		"check": "tsc && oxlint ./src/main.ts",
-		"format": "oxfmt --write ./src/tangram.d.ts ./src/main.ts"
+		"check": "tsc && tsc --project tests && oxlint ./src/main.ts ./src/text.ts ./src/text ./tests",
+		"test": "bun test ./tests",
+		"format": "oxfmt --write ./src/tangram.d.ts ./src/main.ts ./src/text.ts ./src/text ./tests"
 	},
 	"dependencies": {
+		"@kayahr/text-encoding": "2.2.0",
 		"@tangramdotdev/client": "workspace:*"
 	},
 	"devDependencies": {

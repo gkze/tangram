@@ -5,6 +5,49 @@ export as namespace Tangram;
 export as namespace tg;
 
 declare global {
+	interface TextDecoderOptions {
+		fatal?: boolean;
+		ignoreBOM?: boolean;
+	}
+
+	interface TextDecodeOptions {
+		stream?: boolean;
+	}
+
+	interface TextEncoderEncodeIntoResult {
+		read: number;
+		written: number;
+	}
+
+	interface TextEncoder {
+		readonly encoding: string;
+		encode(input?: string): Uint8Array<ArrayBuffer>;
+		encodeInto(
+			source: string,
+			destination: Uint8Array,
+		): TextEncoderEncodeIntoResult;
+	}
+
+	interface TextDecoder {
+		readonly encoding: string;
+		readonly fatal: boolean;
+		readonly ignoreBOM: boolean;
+		decode(
+			input?: ArrayBufferLike | ArrayBufferView,
+			options?: TextDecodeOptions,
+		): string;
+	}
+
+	var TextEncoder: {
+		prototype: TextEncoder;
+		new (): TextEncoder;
+	};
+
+	var TextDecoder: {
+		prototype: TextDecoder;
+		new (label?: string, options?: TextDecoderOptions): TextDecoder;
+	};
+
 	interface ImportMeta {
 		module: tg.Module;
 	}

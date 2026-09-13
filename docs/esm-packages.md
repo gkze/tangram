@@ -38,8 +38,8 @@ imports and exports is an intended continuing responsibility, even when a bridge
 eventually provisions packages through Tangram. Resolving module imports during
 capture and loading exact recorded edges during execution preserves that
 separation. A bridge should not need an independently maintained module resolver
-or a library-specific module registry. Effect is a prospective consumer of this
-general integration, not a special case in the engine.
+or a library-specific module registry. Individual libraries are consumers of this general integration, not special
+cases in the engine.
 
 Keep enablement and resolver conditions in the separate
 `tangram.packages.json` file. This makes the package scope explicit and lets the
@@ -85,6 +85,14 @@ The pinned QuickJS engine crashes on some cycles through imported bindings that 
 
 The shared Rust package-resolution boundary uses [Oxc Resolver](https://github.com/oxc-project/oxc-resolver), pinned in Cargo.lock. The workspace requires Rust 1.96, matching the existing pinned Oxc parser; the resolver requires Rust 1.95. Its maintained package-map implementation and custom filesystem interface avoid duplicating exports/imports precedence and target validation. Tangram owns the explicit scope, dependency declarations, supported module kinds, runtime/type separation, and graph capture. Every resolver filesystem operation is confined to the canonical scope, including symlink targets. A fresh resolver avoids stale internal filesystem caches.
 
-The main alternative was a local implementation of package-map semantics. It would reduce the dependency footprint but require Tangram to maintain conditional maps, pattern matching, target rejection, and their conformance cases. The runtime's existing module callbacks do not supply those semantics. Oxc's support for CommonJS resolution does not enable CommonJS execution here. No JavaScript dependencies are bundled into the evaluator's main module, and there is no public resolver-plugin framework.
+The main alternative was a local implementation of package-map semantics. It would reduce the dependency footprint but require Tangram to maintain conditional maps, pattern matching, target rejection, and their conformance cases. The runtime's existing module callbacks do not supply those semantics. Oxc's support for CommonJS resolution does not enable CommonJS execution here. Provisioned packages are not bundled into the evaluator's main module, and there is no public resolver-plugin framework.
 
-After validation, a downstream source consumer can pin the resulting Tangram revision, update its source provenance, and run its own bootstrap and self-build checks. This change does not update Universe or establish its self-build provenance.
+Downstream source consumers should pin a Tangram revision and validate their own bootstrap and self-build provenance.
+
+## Evaluator capabilities
+
+See [JavaScript evaluation](javascript.md) for text encoding and evaluator limits.
+Package availability does not grant additional runtime capabilities.
+
+See the [package acceptance record](validation/esm-packages.md) for the optional
+real-package integration test and its verified scope.
