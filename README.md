@@ -66,6 +66,8 @@ $ tg run
 Hello, World!
 ```
 
+For explicitly provisioned JavaScript dependencies, see [ESM packages](docs/esm-packages.md).
+
 ## As a package manager
 
 Use Tangram to build reproducible environments that start instantly. This example builds an environment that contains specific versions of `jq` and `ripgrep`.

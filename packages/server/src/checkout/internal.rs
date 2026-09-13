@@ -1187,7 +1187,7 @@ impl Session {
 		for (reference, dependency) in &node.dependencies {
 			let mut reference = reference.clone();
 			let Some(dependency) = dependency else {
-				references.push(reference);
+				references.push(reference.into());
 				continue;
 			};
 
@@ -1198,13 +1198,13 @@ impl Session {
 				},
 				Some(tg::graph::data::Edge::Object(id)) => {
 					let Ok(id) = id.try_into() else {
-						references.push(reference);
+						references.push(reference.into());
 						continue;
 					};
 					tg::graph::data::Edge::Object(id)
 				},
 				None => {
-					references.push(reference);
+					references.push(reference.into());
 					continue;
 				},
 			};
@@ -1221,6 +1221,13 @@ impl Session {
 				.checkout_internal_get_item(edge)
 				.map_err(|error| tg::error!(!error, "failed to get the item"))?;
 			self.add_permanent_token_to_object_reference(&mut reference, &item.id)?;
+			let mut dependency = dependency.clone();
+			if let Some(tg::graph::data::Edge::Pointer(pointer)) = &mut dependency.0.node
+				&& pointer.graph.is_none()
+			{
+				pointer.graph = graph.clone();
+			}
+			let reference = tg::file::DependencyReference::new(reference, Some(dependency));
 			references.push(reference);
 
 			// Collect the dependency if it is not the root artifact.

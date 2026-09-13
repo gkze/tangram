@@ -1146,14 +1146,10 @@ impl Inner {
 		let tg::Artifact::File(file) = tg::Artifact::with_id(artifact) else {
 			return Ok(Vec::new());
 		};
-		let dependencies = file
-			.dependencies_with_handle(&self.client)
-			.await
-			.map_err(eio)?;
+		let references = self.file_dependency_references(&file).await?;
 		let module = file.module_with_handle(&self.client).await.map_err(eio)?;
 		let mut names = Vec::new();
-		if !dependencies.is_empty() {
-			let references = dependencies.into_keys().collect::<Vec<_>>();
+		if !references.is_empty() {
 			let xattrs =
 				tg::file::dependencies_xattrs(&references, tg::file::DEPENDENCIES_XATTR_VALUE_SIZE)
 					.map_err(eio)?;
@@ -1213,14 +1209,26 @@ impl Inner {
 	async fn file_dependency_references(
 		&self,
 		file: &tg::File,
-	) -> std::io::Result<Vec<tg::Reference>> {
+	) -> std::io::Result<Vec<tg::file::DependencyReference>> {
 		let dependencies = file
 			.dependencies_with_handle(&self.client)
 			.await
 			.map_err(eio)?;
 		let mut references = Vec::with_capacity(dependencies.len());
-		for (reference, _) in dependencies {
-			references.push(reference);
+		for reference in dependencies.into_keys() {
+			let dependency = if reference.node().is_module() || reference.node().is_metadata() {
+				file.try_get_dependency_edge_with_handle(&self.client, &reference)
+					.await
+					.map_err(eio)?
+					.map(|dependency| {
+						tg::graph::data::Dependency(
+							dependency.0.map(|edge| edge.map(|edge| edge.to_data())),
+						)
+					})
+			} else {
+				None
+			};
+			references.push(tg::file::DependencyReference::new(reference, dependency));
 		}
 
 		Ok(references)

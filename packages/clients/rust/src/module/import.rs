@@ -1,11 +1,18 @@
 use {crate::prelude::*, std::collections::BTreeMap};
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
+#[derive(
+	Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Deserialize, serde::Serialize,
+)]
 pub struct Import {
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub kind: Option<tg::module::Kind>,
 
 	pub reference: tg::Reference,
+
+	pub specifier: String,
+
+	#[serde(default)]
+	pub types: bool,
 }
 
 impl Import {
@@ -14,7 +21,15 @@ impl Import {
 		mut attributes: Option<BTreeMap<String, String>>,
 	) -> tg::Result<Self> {
 		// Parse the specifier as a reference.
-		let reference = specifier.parse::<tg::Reference>()?;
+		let reference = if specifier.starts_with(['#', '@']) {
+			let import = tg::module::package::Import {
+				specifier: specifier.to_owned(),
+				types: false,
+			};
+			tg::Reference::with_node(tg::reference::Node::Module(import))
+		} else {
+			specifier.parse::<tg::Reference>()?
+		};
 
 		let kind = attributes
 			.as_mut()
@@ -78,7 +93,12 @@ impl Import {
 		};
 		let reference = tg::Reference::with_node_and_options(reference.node().clone(), options);
 
-		let import = Import { kind, reference };
+		let import = Import {
+			kind,
+			reference,
+			specifier: specifier.to_owned(),
+			types: false,
+		};
 
 		Ok(import)
 	}
@@ -87,6 +107,9 @@ impl Import {
 	pub fn without_token(&self) -> Self {
 		let mut import = self.clone();
 		import.reference = import.reference.without_token();
+		if !self.reference.options().tokens.is_empty() {
+			import.specifier = import.reference.to_string();
+		}
 
 		import
 	}

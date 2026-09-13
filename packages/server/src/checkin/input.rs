@@ -190,11 +190,21 @@ impl Session {
 		stack: &mut Vec<Item>,
 		item: Item,
 	) -> tg::Result<()> {
-		// Check if the path has been visited.
-		if let Some(existing_index) = state.graph.paths.get(&item.path) {
+		let package_module = item.path == state.arg.path || item.parent.as_ref().is_some_and(|parent| {
+			matches!(&parent.variant, ParentVariant::FileDependency(reference) if reference.node().is_module())
+		});
+
+		// Promote a previously visited data file when it becomes reachable as a package module.
+		if let Some(existing_index) = state.graph.paths.get(&item.path).copied() {
+			if package_module
+				&& state.graph.nodes.get(&existing_index).is_some_and(
+					|node| matches!(&node.variant, Variant::File(file) if file.module.is_none()),
+				) {
+				self.checkin_visit_file(state, stack, existing_index, true)?;
+			}
 			// Update the parent's edge to point to the existing node.
 			if let Some(parent) = item.parent {
-				Self::checkin_input_update_parent_edge(state, parent, *existing_index)?;
+				Self::checkin_input_update_parent_edge(state, parent, existing_index)?;
 			}
 			return Ok(());
 		}
@@ -204,10 +214,18 @@ impl Session {
 			|error| tg::error!(!error, path = %item.path.display(), "failed to get the metadata"),
 		)?;
 
-		// Skip ignored files, unless the path is in the store path.
-		if !state
-			.store_path
-			.is_some_and(|store_path| item.path.starts_with(store_path))
+		// Include dependencies reached through an explicit package scope.
+		let package_dependency = item
+			.parent
+			.as_ref()
+			.is_some_and(|parent| matches!(&parent.variant, ParentVariant::FileDependency(_)))
+			&& tg::module::package::Scope::try_for_path(&item.path)?.is_some();
+
+		// Skip ignored files unless they are package dependencies or in the store path.
+		if !package_dependency
+			&& !state
+				.store_path
+				.is_some_and(|store_path| item.path.starts_with(store_path))
 			&& state
 				.ignorer
 				.as_mut()
@@ -289,7 +307,7 @@ impl Session {
 				Self::checkin_visit_directory(state, stack, index)?;
 			},
 			Variant::File(_) => {
-				self.checkin_visit_file(state, stack, index)?;
+				self.checkin_visit_file(state, stack, index, package_module)?;
 			},
 			Variant::Object => unreachable!(),
 			Variant::Symlink(_) => {
@@ -380,6 +398,7 @@ impl Session {
 		state: &mut State,
 		stack: &mut Vec<Item>,
 		index: usize,
+		package_module: bool,
 	) -> tg::Result<()> {
 		let path = state
 			.graph
@@ -395,8 +414,57 @@ impl Session {
 		let mut dependencies = BTreeMap::new();
 		let file_tokens = Self::checkin_read_file_tokens(&path)?;
 		if let Some(references) = Self::checkin_read_dependencies_xattr(&path)? {
+			if references.iter().any(|reference| {
+				matches!(reference, tg::file::DependencyReference::Captured { .. })
+			}) {
+				state
+					.graph
+					.nodes
+					.get_mut(&index)
+					.unwrap()
+					.variant
+					.unwrap_file_mut()
+					.module = Self::checkin_detect_module_kind(&path, false)?;
+			}
+
 			// Create the dependencies and push items for path dependencies.
-			for mut reference in references {
+			for reference in references {
+				let mut reference = match reference {
+					tg::file::DependencyReference::Captured {
+						mut dependency,
+						reference,
+					} => {
+						if !(reference.node().is_module() || reference.node().is_metadata()) {
+							return Err(tg::error!(
+								"the captured dependency must be a package reference"
+							));
+						}
+						let edge =
+							dependency.0.node.as_ref().ok_or_else(|| {
+								tg::error!("the captured dependency has no target")
+							})?;
+						if matches!(edge, tg::graph::data::Edge::Pointer(pointer) if pointer.graph.is_none())
+						{
+							return Err(tg::error!("the captured dependency pointer has no graph"));
+						}
+						dependency
+							.0
+							.options
+							.tokens
+							.inherit(&reference.options().tokens);
+						dependency.0.options.tokens.inherit(&file_tokens);
+						if let Some(edge) = &dependency.0.node
+							&& let Some(id) = object_edge_root(edge)
+							&& let Some(token) = dependency.0.options.tokens.local()
+						{
+							self.checkin_merge_object_token(state.graph, state.next, &id, token);
+						}
+						dependencies.insert(reference, Some(dependency));
+						continue;
+					},
+					tg::file::DependencyReference::Reference(reference) => reference,
+				};
+
 				let mut options = reference.options().clone();
 				options.tokens.inherit(&file_tokens);
 				reference.set_options(options);
@@ -457,7 +525,7 @@ impl Session {
 					dependencies.insert(reference, None);
 				}
 			}
-		} else if let Some(kind) = Self::checkin_detect_module_kind(&path)? {
+		} else if let Some(kind) = Self::checkin_detect_module_kind(&path, package_module)? {
 			// Update the node.
 			state
 				.graph
@@ -478,17 +546,69 @@ impl Session {
 			)?;
 
 			// Analyze.
+			let scope = tg::module::package::Scope::try_for_path(&path)?;
 			let module = tg::module::Data {
 				kind,
 				referent: tg::Referent::with_node(tg::module::data::Source::Path(path.clone())),
 			};
 			let analysis = tangram_compiler::Compiler::analyze(&module, &text);
 			for diagnostic in analysis.diagnostics {
+				if scope.is_some() && matches!(diagnostic.severity, tg::diagnostic::Severity::Error)
+				{
+					return Err(
+						tg::error!(diagnostic = %diagnostic.message, "failed to analyze a package module"),
+					);
+				}
 				state.progress.diagnostic(diagnostic);
+			}
+
+			// Capture the scope even when a module has no imports.
+			if let Some(scope) = &scope {
+				Self::checkin_push_package_metadata(
+					stack,
+					index,
+					&path,
+					scope.metadata(&path)?,
+					&mut dependencies,
+				)?;
 			}
 
 			// Create the dependencies and push items for path dependencies.
 			for import in analysis.imports {
+				if let Some(scope) = &scope {
+					let mut captured = false;
+					for types in [false, true] {
+						if (kind == tg::module::Kind::Dts || import.types) && !types {
+							continue;
+						}
+						let mut import = import.clone();
+						import.types = types;
+						let Some(output) = scope.resolve(&path, &import)? else {
+							continue;
+						};
+						captured = true;
+						let reference = tg::module::package::Import::reference(&import);
+						let parent = Parent {
+							index,
+							variant: ParentVariant::FileDependency(reference.clone()),
+						};
+						dependencies.insert(reference, None);
+						stack.push(Item {
+							path: output.path,
+							parent: Some(parent),
+						});
+						Self::checkin_push_package_metadata(
+							stack,
+							index,
+							&path,
+							output.metadata,
+							&mut dependencies,
+						)?;
+					}
+					if captured {
+						continue;
+					}
+				}
 				let mut reference = import.reference;
 				let mut options = reference.options().clone();
 				options.tokens.inherit(&file_tokens);
@@ -594,7 +714,35 @@ impl Session {
 		Ok(())
 	}
 
-	fn checkin_read_dependencies_xattr(path: &Path) -> tg::Result<Option<Vec<tg::Reference>>> {
+	fn checkin_push_package_metadata(
+		stack: &mut Vec<Item>,
+		index: usize,
+		path: &Path,
+		metadata: std::collections::BTreeSet<PathBuf>,
+		dependencies: &mut BTreeMap<tg::Reference, Option<tg::graph::data::Dependency>>,
+	) -> tg::Result<()> {
+		for metadata in metadata {
+			let relative = tangram_util::path::diff(path.parent().unwrap(), &metadata)
+				.map_err(|error| tg::error!(!error, "failed to create the metadata reference"))?
+				.unwrap();
+			let reference = tg::Reference::with_node(tg::reference::Node::Metadata(relative));
+			let parent = Parent {
+				index,
+				variant: ParentVariant::FileDependency(reference.clone()),
+			};
+			dependencies.insert(reference, None);
+			let item = Item {
+				path: metadata,
+				parent: Some(parent),
+			};
+			stack.push(item);
+		}
+		Ok(())
+	}
+
+	fn checkin_read_dependencies_xattr(
+		path: &Path,
+	) -> tg::Result<Option<Vec<tg::file::DependencyReference>>> {
 		let Ok(names) = xattr::list(path) else {
 			return Ok(None);
 		};
@@ -1021,7 +1169,10 @@ impl Session {
 		}
 	}
 
-	fn checkin_detect_module_kind(path: &Path) -> tg::Result<Option<tg::module::Kind>> {
+	fn checkin_detect_module_kind(
+		path: &Path,
+		package_module: bool,
+	) -> tg::Result<Option<tg::module::Kind>> {
 		let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
 			return Ok(None);
 		};
@@ -1030,6 +1181,12 @@ impl Session {
 		}
 		if name == "tangram.ts" || name.ends_with(".tg.ts") {
 			return Ok(Some(tg::module::Kind::Ts));
+		}
+		if package_module
+			&& let Some(scope) = tg::module::package::Scope::try_for_path(path)?
+			&& let Some(kind) = scope.kind(path)?
+		{
+			return Ok(Some(kind));
 		}
 		let Some(xattr) = xattr::get(path, tg::file::MODULE_XATTR_NAME)
 			.map_err(|error| tg::error!(!error, "failed to get the module xattr"))?
@@ -1055,7 +1212,10 @@ fn reference_node_to_object_edge(
 		tg::reference::Node::Pointer(pointer) => {
 			Some(tg::graph::data::Edge::Pointer(pointer.clone()))
 		},
-		tg::reference::Node::Path(_) | tg::reference::Node::Specifier(_) => None,
+		tg::reference::Node::Metadata(_)
+		| tg::reference::Node::Module(_)
+		| tg::reference::Node::Path(_)
+		| tg::reference::Node::Specifier(_) => None,
 	}
 }
 

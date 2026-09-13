@@ -19,12 +19,13 @@ impl Compiler {
 		// Get the path.
 		let tg::module::Data {
 			kind:
-				tg::module::Kind::Js
-				| tg::module::Kind::Ts
-				| tg::module::Kind::Artifact
+				tg::module::Kind::Artifact
 				| tg::module::Kind::Directory
+				| tg::module::Kind::Dts
 				| tg::module::Kind::File
-				| tg::module::Kind::Symlink,
+				| tg::module::Kind::Js
+				| tg::module::Kind::Symlink
+				| tg::module::Kind::Ts,
 			referent: tg::Referent {
 				node: tg::module::data::Source::Path(path),
 				..
@@ -34,6 +35,10 @@ impl Compiler {
 		else {
 			return Ok(0);
 		};
+
+		if !path.is_absolute() {
+			return Ok(0);
+		}
 
 		// Get the modified time.
 		let metadata = tokio::fs::symlink_metadata(&path)
@@ -48,16 +53,13 @@ impl Compiler {
 
 		// Get or create the document.
 		let mut document = entry.or_insert(Document {
-			dirty: false,
-			modified: Some(modified),
-			open: false,
-			text: None,
-			version: 0,
 			lockfile,
+			modified: Some(modified),
+			..Default::default()
 		});
 
 		// Update the modified time if necessary.
-		if modified > document.modified.unwrap() {
+		if document.modified != Some(modified) {
 			document.modified = Some(modified);
 			document.version += 1;
 		}

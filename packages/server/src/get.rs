@@ -16,6 +16,11 @@ impl Session {
 		arg: tg::get::Arg,
 	) -> tg::Result<BoxStream<'static, tg::Result<tg::progress::Event<Option<tg::get::Output>>>>> {
 		let stream = match reference.node() {
+			tg::reference::Node::Metadata(_) | tg::reference::Node::Module(_) => {
+				return Err(tg::error!(
+					"a package module reference requires a captured referrer"
+				));
+			},
 			tg::reference::Node::Id(id)
 				if reference.options().follow
 					&& matches!(

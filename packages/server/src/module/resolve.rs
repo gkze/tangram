@@ -42,7 +42,12 @@ impl Session {
 		} else if let Some(path) = referent.path() {
 			tg::module::module_kind_for_path(path).ok()
 		} else if let tg::module::data::Source::Path(path) = referent.node() {
-			tg::module::module_kind_for_path(path).ok()
+			tg::module::module_kind_for_path(path).ok().or_else(|| {
+				tg::module::package::Scope::try_for_path(path)
+					.ok()
+					.flatten()
+					.and_then(|scope| scope.kind(path).ok().flatten())
+			})
 		} else {
 			None
 		};
@@ -112,6 +117,20 @@ impl Session {
 	fn resolve_module_without_referrer(
 		import: &tg::module::Import,
 	) -> tg::Result<tg::Referent<tg::module::data::Source>> {
+		if let tg::reference::Node::Path(path) = import.reference.node()
+			&& path.is_absolute()
+			&& let Some(scope) = tg::module::package::Scope::try_for_path(path)?
+		{
+			let path = scope.canonicalize(path)?;
+			let kind = tg::module::module_kind_for_path(&path)
+				.ok()
+				.or(scope.kind(&path)?);
+			if !matches!(kind, Some(tg::module::Kind::Js | tg::module::Kind::Ts)) {
+				return Err(tg::error!("expected an executable package module"));
+			}
+			let source = tg::module::data::Source::Path(path);
+			return Ok(tg::Referent::with_node(source));
+		}
 		let edge = reference_node_to_object_edge(import.reference.node())
 			.ok_or_else(|| tg::error!("expected a fully specified import"))?;
 		if import.reference.options().get.is_some() {
@@ -169,9 +188,20 @@ impl Session {
 				|| tg::error!(referrer = %referrer.node, "the referrer must be a file"),
 			)?;
 
+		// Select the captured package edge without repeating package resolution.
+		let package_reference = tg::module::package::Import::reference(import);
+		let dependencies = file.dependencies_with_handle(self).await?;
+		let reference = if tg::module::package::Import::is_package(import)
+			&& dependencies.contains_key(&package_reference)
+		{
+			&package_reference
+		} else {
+			&import.reference
+		};
+
 		// Get the dependency edge and the refreshed authorization token.
 		let mut dependency = file
-			.get_dependency_edge_with_handle(self, &import.reference)
+			.get_dependency_edge_with_handle(self, reference)
 			.await
 			.map_err(|error| tg::error!(!error, "failed to get the dependency edge"))?;
 		let authorization = authorization.to_referent();
@@ -405,6 +435,12 @@ impl Session {
 		referrer: &tg::Referent<&Path>,
 		import: &tg::module::Import,
 	) -> tg::Result<tg::Referent<tg::module::data::Source>> {
+		if let Some(scope) = tg::module::package::Scope::try_for_path(referrer.node())?
+			&& let Some(output) = scope.resolve(referrer.node(), import)?
+		{
+			let source = tg::module::data::Source::Path(output.path);
+			return Ok(tg::Referent::with_node(source));
+		}
 		let path = import.reference.options().source.as_ref().or(import
 			.reference
 			.node()
@@ -678,8 +714,8 @@ impl Session {
 			.await
 			.map_err(|error| tg::error!(!error, "failed to deserialize the request body"))?;
 		if let Some(referrer) = &mut arg.referrer
-			&& !matches!(referrer.kind, tg::module::Kind::Dts)
 			&& let tg::module::data::Source::Path(path) = &mut referrer.referent.node
+			&& (referrer.kind != tg::module::Kind::Dts || path.is_absolute())
 		{
 			*path = self.host_path_for_guest_path(path)?;
 		}
@@ -709,8 +745,8 @@ impl Session {
 			.resolve_module(arg)
 			.await
 			.map_err(|error| tg::error!(!error, "failed to resolve the module"))?;
-		if !matches!(output.module.kind, tg::module::Kind::Dts)
-			&& let tg::module::data::Source::Path(path) = &mut output.module.referent.node
+		if let tg::module::data::Source::Path(path) = &mut output.module.referent.node
+			&& (output.module.kind != tg::module::Kind::Dts || path.is_absolute())
 		{
 			*path = self.guest_path_for_host_path(path)?;
 		}
@@ -749,6 +785,9 @@ fn reference_node_to_object_edge(
 		tg::reference::Node::Pointer(pointer) => {
 			Some(tg::graph::data::Edge::Pointer(pointer.clone()))
 		},
-		tg::reference::Node::Path(_) | tg::reference::Node::Specifier(_) => None,
+		tg::reference::Node::Metadata(_)
+		| tg::reference::Node::Module(_)
+		| tg::reference::Node::Path(_)
+		| tg::reference::Node::Specifier(_) => None,
 	}
 }

@@ -867,6 +867,11 @@ impl Compiler {
 		if let Ok(kind) = tg::module::module_kind_for_path(path) {
 			return Ok(kind);
 		}
+		if let Some(scope) = tg::module::package::Scope::try_for_path(path)?
+			&& let Some(kind) = scope.kind(path)?
+		{
+			return Ok(kind);
+		}
 		let metadata = tokio::fs::symlink_metadata(path)
 			.await
 			.map_err(|error| tg::error!(!error, "failed to get the metadata"))?;
@@ -1074,10 +1079,12 @@ impl Compiler {
 			.ok_or_else(|| tg::error!(path = %path.display(), "invalid path"))?
 			.to_str()
 			.ok_or_else(|| tg::error!(path = %path.display(), "invalid path"))?;
-		if !tg::module::is_module_path(file_name.as_ref()) {
+		if !tg::module::is_module_path(file_name.as_ref())
+			&& tg::module::package::Scope::try_for_path(path)?.is_none()
+		{
 			return Err(tg::error!(path = %path.display(), "expected a module path"));
 		}
-		let kind = tg::module::module_kind_for_path(file_name)?;
+		let kind = self.module_kind_for_path(path).await?;
 		let module = tg::module::Data {
 			kind,
 			referent: tg::Referent::with_node(tg::module::data::Source::Path(path.to_owned())),
@@ -1096,7 +1103,7 @@ impl Compiler {
 						..
 					},
 				..
-			} => {
+			} if !path.is_absolute() => {
 				let relative_path = path.strip_prefix("./").unwrap_or(path);
 				let absolute_path = self.library_path.join(relative_path);
 				let exists = tokio::fs::try_exists(&absolute_path)

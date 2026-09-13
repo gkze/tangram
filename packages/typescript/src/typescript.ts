@@ -107,6 +107,11 @@ export let host: ts.LanguageServiceHost & ts.CompilerHost = {
 				parent.expression.kind === ts.SyntaxKind.ImportKeyword
 			) {
 				attributes = getImportAttributesFromImportExpression(parent);
+			} else if (
+				ts.isLiteralTypeNode(parent) &&
+				ts.isImportTypeNode(parent.parent)
+			) {
+				attributes = null;
 			} else {
 				return unreachable();
 			}
@@ -182,7 +187,7 @@ let resolveLibraryModule = (
 		return null;
 	}
 	let source = referrer.referent.node;
-	if (typeof source !== "string") {
+	if (typeof source !== "string" || !source.startsWith("./")) {
 		return null;
 	}
 	let referrerPath = source.startsWith("./") ? source.slice(2) : source;
@@ -295,7 +300,11 @@ let getImportAttributesFromImportExpression = (
 
 /** Convert a module to a TypeScript file name. */
 export let fileNameFromModule = (module: Module): string => {
-	if (module.kind === "dts") {
+	if (
+		module.kind === "dts" &&
+		typeof module.referent.node === "string" &&
+		module.referent.node.startsWith("./")
+	) {
 		let source = module.referent.node;
 		assert(typeof source === "string");
 		let path = source.startsWith("./") ? source.slice(2) : source;
@@ -303,7 +312,9 @@ export let fileNameFromModule = (module: Module): string => {
 	}
 	let string = Module.toDataString(module);
 	let extension: string;
-	if (module.kind === "js") {
+	if (module.kind === "dts") {
+		extension = ".d.ts";
+	} else if (module.kind === "js") {
 		extension = ".js";
 	} else if (module.kind === "ts") {
 		extension = ".ts";

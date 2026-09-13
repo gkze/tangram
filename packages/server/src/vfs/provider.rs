@@ -558,7 +558,7 @@ impl Provider {
 		&self,
 		file: &tg::graph::data::File,
 		graph: Option<&tg::graph::Id>,
-	) -> std::io::Result<Vec<tg::Reference>> {
+	) -> std::io::Result<Vec<tg::file::DependencyReference>> {
 		let session = self.session();
 		let mut references = Vec::with_capacity(file.dependencies.len());
 		for (reference, dependency) in &file.dependencies {
@@ -567,16 +567,16 @@ impl Provider {
 				.as_ref()
 				.and_then(|dependency| dependency.0.node.as_ref())
 			else {
-				references.push(reference);
+				references.push(reference.into());
 				continue;
 			};
 			let Ok(edge) = tg::graph::data::Edge::<tg::artifact::Id>::try_from(edge.clone()) else {
-				references.push(reference);
+				references.push(reference.into());
 				continue;
 			};
-			let dependency = Self::artifact_from_edge_inner(edge, graph)?;
+			let artifact = Self::artifact_from_edge_inner(edge, graph)?;
 			session
-				.add_permanent_token_to_object_reference(&mut reference, &dependency.id)
+				.add_permanent_token_to_object_reference(&mut reference, &artifact.id)
 				.map_err(|error| {
 					tracing::error!(
 						error = %error.trace(),
@@ -584,7 +584,14 @@ impl Provider {
 					);
 					std::io::Error::from_raw_os_error(libc::EIO)
 				})?;
-			references.push(reference);
+			let mut dependency = dependency.clone();
+			if let Some(dependency) = &mut dependency
+				&& let Some(tg::graph::data::Edge::Pointer(pointer)) = &mut dependency.0.node
+				&& pointer.graph.is_none()
+			{
+				pointer.graph = graph.cloned();
+			}
+			references.push(tg::file::DependencyReference::new(reference, dependency));
 		}
 
 		Ok(references)

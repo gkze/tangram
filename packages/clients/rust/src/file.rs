@@ -4,8 +4,8 @@ pub use self::{
 	builder::Builder,
 	data::File as Data,
 	dependencies::{
-		DependenciesXattr, dependencies_xattrs, deserialize_dependencies_xattr,
-		is_dependencies_xattr_name,
+		DependenciesXattr, DependencyReference, dependencies_xattrs,
+		deserialize_dependencies_xattr, is_dependencies_xattr_name,
 	},
 	handle::File as Handle,
 	id::Id,

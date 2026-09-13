@@ -123,11 +123,13 @@ impl<'a> Visitor<'a> {
 		specifier: &str,
 		attributes: Option<&BTreeMap<String, String>>,
 		span: Span,
+		types: bool,
 	) {
 		let result =
 			tg::module::Import::with_specifier_and_attributes(specifier, attributes.cloned());
 		match result {
-			Ok(import) => {
+			Ok(mut import) => {
+				import.types = types;
 				self.imports.insert(import);
 			},
 			Err(error) => {
@@ -171,7 +173,12 @@ impl<'a> oxc::ast_visit::Visit<'a> for Visitor<'a> {
 			.with_clause
 			.as_ref()
 			.map(|with_clause| Self::get_import_attributes_from_with_clause(with_clause));
-		self.add_import(specifier, attributes.as_ref(), declaration.span);
+		self.add_import(
+			specifier,
+			attributes.as_ref(),
+			declaration.span,
+			declaration.import_kind.is_type() || declaration.specifiers.as_ref().is_some_and(|specifiers| !specifiers.is_empty() && specifiers.iter().all(|specifier| matches!(specifier, oxc::ast::ast::ImportDeclarationSpecifier::ImportSpecifier(specifier) if specifier.import_kind.is_type()))),
+		);
 	}
 
 	fn visit_export_from_declaration(&mut self, declaration: &ExportFromDeclaration<'a>) {
@@ -180,7 +187,17 @@ impl<'a> oxc::ast_visit::Visit<'a> for Visitor<'a> {
 			.with_clause
 			.as_ref()
 			.map(|with_clause| Self::get_import_attributes_from_with_clause(with_clause));
-		self.add_import(specifier, attributes.as_ref(), declaration.span);
+		self.add_import(
+			specifier,
+			attributes.as_ref(),
+			declaration.span,
+			declaration.export_kind.is_type()
+				|| (!declaration.specifiers.is_empty()
+					&& declaration
+						.specifiers
+						.iter()
+						.all(|specifier| specifier.export_kind.is_type())),
+		);
 		oxc::ast_visit::walk::walk_export_from_declaration(self, declaration);
 	}
 
@@ -190,7 +207,17 @@ impl<'a> oxc::ast_visit::Visit<'a> for Visitor<'a> {
 			.with_clause
 			.as_ref()
 			.map(|with_clause| Self::get_import_attributes_from_with_clause(with_clause));
-		self.add_import(specifier, attributes.as_ref(), declaration.span);
+		self.add_import(
+			specifier,
+			attributes.as_ref(),
+			declaration.span,
+			declaration.export_kind.is_type(),
+		);
+	}
+
+	fn visit_ts_import_type(&mut self, import: &oxc::ast::ast::TSImportType<'a>) {
+		self.add_import(import.source.value.as_str(), None, import.span, true);
+		oxc::ast_visit::walk::walk_ts_import_type(self, import);
 	}
 
 	fn visit_import_expression(&mut self, expression: &oxc::ast::ast::ImportExpression<'a>) {
@@ -198,7 +225,12 @@ impl<'a> oxc::ast_visit::Visit<'a> for Visitor<'a> {
 			let attributes = expression.options.as_ref().and_then(|import_attributes| {
 				Self::get_import_attributes_from_import_expression_options(import_attributes)
 			});
-			self.add_import(literal.value.as_str(), attributes.as_ref(), expression.span);
+			self.add_import(
+				literal.value.as_str(),
+				attributes.as_ref(),
+				expression.span,
+				false,
+			);
 		} else {
 			self.diagnostics.push(tg::diagnostic::Data {
 				message: "The argument to the import function must be a string literal.".to_owned(),
@@ -234,6 +266,30 @@ impl<'a> oxc::ast_visit::Visit<'a> for Visitor<'a> {
 #[cfg(test)]
 mod tests {
 	use {super::*, indoc::indoc};
+
+	#[test]
+	fn type_only_imports() {
+		let module = tg::module::Data {
+			kind: tg::module::Kind::Ts,
+			referent: tg::Referent::with_node(tg::module::data::Source::Path("tangram.ts".into())),
+		};
+		let analysis = Compiler::analyze(
+			&module,
+			r#"
+			import type { A } from "first";
+			import { type B } from "second";
+			export type { C } from "third";
+			export { type D } from "fourth";
+			type E = import("fifth").E;
+			export * from "runtime";
+		"#,
+		);
+		assert!(analysis.diagnostics.is_empty());
+		assert_eq!(analysis.imports.len(), 6);
+		for import in analysis.imports {
+			assert_eq!(import.types, import.specifier != "runtime");
+		}
+	}
 
 	// Analysis collects the specifiers of every static import, dynamic import, and re-export, including nested ones.
 	#[test]

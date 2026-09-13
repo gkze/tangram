@@ -27,6 +27,15 @@ pub(super) struct CheckinCheckoutArg<'a> {
 	pub root: &'a Path,
 }
 
+struct File {
+	id: tg::object::Id,
+	metadata: std::fs::Metadata,
+	module: Option<tg::module::Kind>,
+	path: PathBuf,
+	references: Vec<tg::file::DependencyReference>,
+	size: u64,
+}
+
 impl Session {
 	#[tracing::instrument(level = "trace", skip_all)]
 	pub(super) async fn checkin_checkout(&self, arg: CheckinCheckoutArg<'_>) -> tg::Result<()> {
@@ -62,16 +71,24 @@ impl Session {
 					let metadata = node.path_metadata.as_ref()?.clone();
 					let file = node.variant.try_unwrap_file_ref().ok()?;
 					let id = node.id.as_ref()?.clone();
-					let references = file.dependencies.keys().cloned().collect::<Vec<_>>();
+					let references = Self::checkin_checkout_references(graph, file);
+					let module = file.module;
 					let size = metadata.len();
-					Some((path, metadata, id, references, size))
+					Some(File {
+						id,
+						metadata,
+						module,
+						path,
+						references,
+						size,
+					})
 				})
 				.collect::<Vec<_>>();
 
 			// Start the progress indicator.
 			progress.spinner("copying", "copying");
 			let files_total = files.len().to_u64().unwrap();
-			let bytes_total = files.iter().map(|(_, _, _, _, size)| size).sum();
+			let bytes_total = files.iter().map(|file| file.size).sum();
 			progress.start(
 				"files".to_owned(),
 				"files".to_owned(),
@@ -117,6 +134,26 @@ impl Session {
 			progress.finish("bytes");
 		}
 		Ok(())
+	}
+
+	fn checkin_checkout_references(
+		graph: &Graph,
+		file: &super::graph::File,
+	) -> Vec<tg::file::DependencyReference> {
+		file.dependencies
+			.iter()
+			.map(|(reference, dependency)| {
+				let mut dependency = dependency.clone();
+				if let Some(dependency) = &mut dependency
+					&& let Some(tg::graph::data::Edge::Pointer(pointer)) = &dependency.0.node
+					&& pointer.graph.is_none()
+				{
+					let node = graph.nodes.get(&pointer.index).unwrap();
+					dependency.0.node = Some(node.edge.as_ref().unwrap().clone());
+				}
+				tg::file::DependencyReference::new(reference.clone(), dependency)
+			})
+			.collect()
 	}
 
 	async fn checkin_checkout_destructive(&self, graph: &Graph, root: &Path) -> tg::Result<()> {
@@ -252,17 +289,19 @@ impl Session {
 
 	fn checkin_checkout_inner(
 		&self,
-		batch: Vec<(
-			PathBuf,
-			std::fs::Metadata,
-			tg::object::Id,
-			Vec<tg::Reference>,
-			u64,
-		)>,
+		batch: Vec<File>,
 		progress: &crate::progress::Handle<super::TaskOutput>,
 	) -> tg::Result<()> {
 		let xattr_capabilities = xattrs::internal_capabilities(&self.server)?;
-		for (path, metadata, id, references, size) in batch {
+		for File {
+			id,
+			metadata,
+			module,
+			path,
+			references,
+			size,
+		} in batch
+		{
 			// If the file is already checked out, then continue.
 			let checkout_path = self.server.checkout_path().join(id.to_string());
 			if checkout_path.exists() {
@@ -289,9 +328,14 @@ impl Session {
 			let artifact = tg::artifact::Id::try_from(id.clone())
 				.map_err(|_| tg::error!(%id, "expected an artifact id"))?;
 			let token = self.create_permanent_object_token(&artifact)?;
+			let module = module.as_ref().map(ToString::to_string);
+			let required = [(
+				tg::file::MODULE_XATTR_NAME,
+				module.as_ref().map(String::as_bytes),
+			)];
 			let xattrs = xattrs::Xattrs {
 				dependencies: &references,
-				required: &[],
+				required: &required,
 				token: token.as_ref(),
 			};
 			xattrs::write_file_xattrs(dst, xattrs, xattr_capabilities)?;

@@ -38,7 +38,7 @@ edition = "2024"
 homepage = "https://www.tangram.dev"
 license = "MIT"
 repository = "https://github.com/tangramdotdev/tangram"
-rust-version = "1.91"
+rust-version = "1.96"
 version = "0.0.0"
 
 [workspace.lints.clippy]
@@ -157,6 +157,7 @@ owo-colors = "4"
 oxc = { git = "https://github.com/oxc-project/oxc", features = ["full"] }
 oxc_formatter = { git = "https://github.com/oxc-project/oxc" }
 oxc_formatter_core = { git = "https://github.com/oxc-project/oxc" }
+oxc_resolver = "=11.24.3"
 percent-encoding = "2"
 petgraph = "0.8"
 pin-project = "1"
@@ -215,6 +216,7 @@ tangram_uri = { path = "packages/uri" }
 tangram_util = { path = "packages/util" }
 tangram_v8 = { path = "packages/v8" }
 tangram_vfs = { path = "packages/vfs" }
+tempfile = "3"
 time = { version = "0.3", features = ["formatting", "parsing", "serde"] }
 tokio = { version = "1", features = ["full", "tracing"] }
 tokio-postgres = { version = "0.7", features = ["runtime", "with-serde_json-1"] }

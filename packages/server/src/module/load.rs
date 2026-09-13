@@ -19,7 +19,7 @@ impl Session {
 						node: tg::module::data::Source::Path(path),
 						..
 					},
-			} => {
+			} if !path.is_absolute() => {
 				let file = tangram_compiler::LIBRARY
 					.get_file(path)
 					.ok_or_else(|| tg::error!(?path, "failed to find the library module"))?;
@@ -29,7 +29,7 @@ impl Session {
 
 			// Handle a JS or TS module from a path.
 			tg::module::Data {
-				kind: tg::module::Kind::Js | tg::module::Kind::Ts,
+				kind: tg::module::Kind::Js | tg::module::Kind::Ts | tg::module::Kind::Dts,
 				referent:
 					tg::Referent {
 						node: tg::module::data::Source::Path(path),
@@ -41,12 +41,22 @@ impl Session {
 				let text = tokio::fs::read_to_string(&path).await.map_err(
 					|error| tg::error!(!error, path = %path.display(), "failed to read the file"),
 				)?;
+				if tg::module::package::Scope::try_for_path(path)?.is_some() {
+					let analysis = tangram_compiler::Compiler::analyze(&arg.module, &text);
+					if let Some(diagnostic) = analysis.diagnostics.into_iter().find(|diagnostic| {
+						matches!(diagnostic.severity, tg::diagnostic::Severity::Error)
+					}) {
+						return Err(
+							tg::error!(diagnostic = %diagnostic.message, "failed to analyze the package module"),
+						);
+					}
+				}
 				Ok(tg::module::load::Output { text })
 			},
 
 			// Handle a JS or TS module from an object.
 			tg::module::Data {
-				kind: tg::module::Kind::Js | tg::module::Kind::Ts,
+				kind: tg::module::Kind::Js | tg::module::Kind::Ts | tg::module::Kind::Dts,
 				referent:
 					tg::Referent {
 						node: tg::module::data::Source::Edge(edge),
@@ -162,8 +172,8 @@ impl Session {
 			.json()
 			.await
 			.map_err(|error| tg::error!(!error, "failed to deserialize the request body"))?;
-		if !matches!(arg.module.kind, tg::module::Kind::Dts)
-			&& let tg::module::data::Source::Path(path) = &mut arg.module.referent.node
+		if let tg::module::data::Source::Path(path) = &mut arg.module.referent.node
+			&& (arg.module.kind != tg::module::Kind::Dts || path.is_absolute())
 		{
 			*path = self.host_path_for_guest_path(path)?;
 		}

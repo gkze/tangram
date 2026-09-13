@@ -10,6 +10,7 @@ pub mod data;
 pub mod handle;
 pub mod import;
 pub mod load;
+pub mod package;
 pub mod resolve;
 
 /// The possible file names for the root module in a package.

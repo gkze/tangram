@@ -28,12 +28,14 @@ impl Compiler {
 }
 
 /// A document.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Document {
 	pub dirty: bool,
 	pub lockfile: Option<Lockfile>,
 	pub modified: Option<std::time::SystemTime>,
 	pub open: bool,
+	pub package_resolutions:
+		std::collections::BTreeMap<tg::module::Import, Option<tg::module::Data>>,
 	pub text: Option<String>,
 	pub version: i32,
 }
@@ -71,12 +73,11 @@ impl Compiler {
 
 		// Create the document.
 		let document = Document {
-			open: true,
-			dirty: false,
-			version,
-			modified: None,
-			text: Some(text),
 			lockfile,
+			open: true,
+			text: Some(text),
+			version,
+			..Default::default()
 		};
 
 		// Insert the document.

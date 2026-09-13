@@ -219,6 +219,32 @@ impl Watch {
 						}
 					}
 
+					// Re-resolve package edges when a scope changes, including previously absent metadata or targets.
+					let package_roots: Vec<_> = state
+						.graph
+						.nodes
+						.values()
+						.filter_map(|node| node.path.as_ref())
+						.filter(|path| {
+							path.file_name()
+								.is_some_and(|name| name == tg::module::package::FILE_NAME)
+						})
+						.filter_map(|path| path.parent())
+						.filter(|root| {
+							!only_lockfile_changed
+								&& paths.iter().any(|path| path.starts_with(root))
+						})
+						.collect();
+					let package_paths: Vec<_> = state
+						.graph
+						.nodes
+						.values()
+						.filter_map(|node| node.path.as_ref())
+						.filter(|path| package_roots.iter().any(|root| path.starts_with(root)))
+						.cloned()
+						.collect();
+					paths.extend(package_paths.iter().map(PathBuf::as_path));
+
 					// Update the nodes for the affected paths along with their ancestors.
 					for path in paths {
 						if state.affected_paths.contains(path) {
@@ -588,7 +614,18 @@ impl State {
 	#[cfg(target_os = "macos")]
 	fn update_paths_darwin(&mut self) {
 		// Get the new paths.
-		let paths = self.graph.paths.roots();
+		let mut paths = self.graph.paths.roots();
+		paths.extend(
+			self.graph
+				.nodes
+				.values()
+				.filter_map(|node| node.path.as_ref())
+				.filter(|path| {
+					path.file_name()
+						.is_some_and(|name| name == tg::module::package::FILE_NAME)
+				})
+				.filter_map(|path| path.parent().map(Path::to_path_buf)),
+		);
 
 		// Add the new paths.
 		let mut watcher_paths = self.watcher.paths_mut();
@@ -633,6 +670,13 @@ impl State {
 		{
 			tracing::trace!(path = %path.display(), "watched");
 			paths.add(path, notify::RecursiveMode::NonRecursive).ok();
+			if path
+				.file_name()
+				.is_some_and(|name| name == tg::module::package::FILE_NAME)
+				&& let Some(root) = path.parent()
+			{
+				paths.add(root, notify::RecursiveMode::Recursive).ok();
+			}
 		}
 		paths.commit().ok();
 	}

@@ -26,19 +26,30 @@ pub fn invalidated_resolutions(
 			return Ok(false);
 		};
 
+		// Revalidate package targets, including imports that previously failed to resolve.
+		let resolutions = compiler
+			.documents
+			.get(&module)
+			.map(|document| document.package_resolutions.clone())
+			.unwrap_or_default();
+		for (import, expected) in resolutions {
+			let arg = tg::module::resolve::Arg {
+				import,
+				referrer: Some(module.clone()),
+			};
+			let current = compiler
+				.handle
+				.resolve_module(arg)
+				.await
+				.ok()
+				.map(|output| output.module);
+			if current != expected {
+				return Ok(true);
+			}
+		}
+
 		// Get or create the document.
-		let document =
-			compiler
-				.documents
-				.entry(module.clone())
-				.or_insert_with(|| crate::document::Document {
-					dirty: false,
-					lockfile: None,
-					modified: None,
-					open: false,
-					text: None,
-					version: 0,
-				});
+		let document = compiler.documents.entry(module.clone()).or_default();
 
 		// If the document doesn't have a lockfile, search for one.
 		if document.lockfile.is_none() {
@@ -84,14 +95,27 @@ pub fn resolve(
 	),
 ) -> tg::Result<Serde<tg::module::Data>> {
 	let (Serde(referrer), specifier, attributes) = args;
-	let import = tg::module::Import::with_specifier_and_attributes(&specifier, attributes)
+	let mut import = tg::module::Import::with_specifier_and_attributes(&specifier, attributes)
 		.map_err(|error| tg::error!(!error, "failed to create the import"))?;
+	import.types = true;
 	compiler.main_runtime_handle.clone().block_on(async move {
 		let arg = tg::module::resolve::Arg {
-			referrer: Some(referrer.clone()),
 			import: import.clone(),
+			referrer: Some(referrer.clone()),
 		};
-		let output = compiler.handle.resolve_module(arg).await.map_err(|error| {
+		let result = compiler.handle.resolve_module(arg).await;
+		if let tg::module::data::Source::Path(path) = &referrer.referent.node
+			&& path.is_absolute()
+			&& tg::module::package::Import::is_package(&import)
+			&& tg::module::package::Scope::try_for_path(path)?.is_some()
+		{
+			let mut document = compiler.documents.entry(referrer.clone()).or_default();
+			document.package_resolutions.insert(
+				import.clone(),
+				result.as_ref().ok().map(|output| output.module.clone()),
+			);
+		}
+		let output = result.map_err(|error| {
 			tg::error!(
 				source = error,
 				import = ?import.without_token(),

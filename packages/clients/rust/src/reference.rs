@@ -44,6 +44,9 @@ pub struct Reference {
 #[unwrap(ref)]
 pub enum Node {
 	Id(tg::Id),
+	#[from(skip)]
+	Metadata(PathBuf),
+	Module(tg::module::package::Import),
 	Path(PathBuf),
 	Pointer(tg::graph::data::Pointer),
 	Specifier(tg::specifier::Pattern),
@@ -207,7 +210,11 @@ impl Reference {
 	#[must_use]
 	pub fn to_uri(&self) -> Uri {
 		let path = self.node.to_string();
-		let mut builder = Uri::builder().path_raw(&path);
+		let mut builder = if self.node.is_module() || self.node.is_metadata() {
+			Uri::builder().path(&path)
+		} else {
+			Uri::builder().path_raw(&path)
+		};
 		if self.options != Options::default() {
 			builder = builder
 				.query_params(&self.options)
@@ -263,6 +270,15 @@ impl std::fmt::Display for Node {
 			Node::Id(id) => {
 				write!(f, "{id}")?;
 			},
+			Node::Metadata(path) => write!(f, "!metadata/{}", path.display())?,
+			Node::Module(import) => {
+				write!(
+					f,
+					"!module/{}/{}",
+					if import.types { "types" } else { "runtime" },
+					import.specifier
+				)?;
+			},
 			Node::Path(path) => {
 				if path
 					.components()
@@ -292,6 +308,24 @@ impl std::str::FromStr for Node {
 	type Err = tg::Error;
 
 	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		if let Some(path) = s.strip_prefix("!metadata/") {
+			return Ok(Self::Metadata(path.into()));
+		}
+		if let Some(value) = s.strip_prefix("!module/") {
+			let (mode, specifier) = value
+				.split_once('/')
+				.ok_or_else(|| tg::error!("invalid module reference"))?;
+			let types = match mode {
+				"runtime" => false,
+				"types" => true,
+				_ => return Err(tg::error!("invalid module resolution mode")),
+			};
+			let import = tg::module::package::Import {
+				specifier: specifier.to_owned(),
+				types,
+			};
+			return Ok(Self::Module(import));
+		}
 		if let Ok(id) = s.parse() {
 			return Ok(Self::Id(id));
 		}

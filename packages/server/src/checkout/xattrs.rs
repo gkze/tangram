@@ -13,7 +13,7 @@ pub struct Capabilities {
 
 #[derive(Clone, Copy)]
 pub struct Xattrs<'a> {
-	pub dependencies: &'a [tg::Reference],
+	pub dependencies: &'a [tg::file::DependencyReference],
 	pub required: &'a [(&'a str, Option<&'a [u8]>)],
 	pub token: Option<&'a tg::authorization::Token>,
 }
@@ -122,7 +122,7 @@ pub fn write_file_xattrs(
 		let references = references
 			.iter()
 			.cloned()
-			.map(tg::Reference::without_tokens)
+			.map(tg::file::DependencyReference::without_tokens)
 			.collect::<Vec<_>>();
 		if write_dependencies_xattrs(path, &references, capabilities.max_value_size)? {
 			return Ok(());
@@ -134,7 +134,7 @@ pub fn write_file_xattrs(
 	let references = references
 		.iter()
 		.cloned()
-		.map(tg::Reference::without_tokens)
+		.map(tg::file::DependencyReference::without_tokens)
 		.collect::<Vec<_>>();
 	if write_dependencies_xattrs(path, &references, capabilities.max_value_size)? {
 		return Ok(());
@@ -147,7 +147,7 @@ pub fn write_file_xattrs(
 
 fn write_dependencies_xattrs(
 	path: &Path,
-	references: &[tg::Reference],
+	references: &[tg::file::DependencyReference],
 	mut max_value_size: usize,
 ) -> tg::Result<bool> {
 	loop {

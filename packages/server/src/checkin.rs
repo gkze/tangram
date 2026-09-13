@@ -896,6 +896,16 @@ impl Session {
 					|error| tg::error!(!error, path = %path.display(), "failed to get the metadata"),
 				)?;
 				if metadata.is_dir()
+					&& ancestor
+						.join(tg::module::package::FILE_NAME)
+						.try_exists()
+						.map_err(|error| {
+							tg::error!(!error, "failed to inspect the package scope")
+						})? {
+					output.replace(ancestor.to_owned());
+					break;
+				}
+				if metadata.is_dir()
 					&& tg::module::try_get_root_module_file_name_sync(ancestor)?.is_some()
 					&& ignorer
 						.as_mut()
