@@ -3,8 +3,9 @@
 	"private": true,
 	"type": "module",
 	"scripts": {
-		"check": "tsc && oxlint ./src/main.ts",
-		"format": "oxfmt --write ./src/tangram.d.ts ./src/main.ts"
+		"check": "tsc && oxlint ./src/main.ts ./src/text.ts ./tests",
+		"format": "oxfmt --write ./src/tangram.d.ts ./src/main.ts ./src/text.ts ./tests",
+		"test": "bun test tests"
 	},
 	"dependencies": {
 		"@tangramdotdev/client": "workspace:*"
