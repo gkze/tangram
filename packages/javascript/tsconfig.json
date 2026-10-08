@@ -3,7 +3,8 @@
 		"allowImportingTsExtensions": true,
 		"exactOptionalPropertyTypes": true,
 		"isolatedModules": true,
-		"lib": ["esnext"],
+		// The DOM library resolves the encoding globals from the Node types to the standard declarations, which the ambient declarations in tangram.d.ts merge with.
+		"lib": ["esnext", "dom"],
 		"module": "esnext",
 		"moduleDetection": "force",
 		"moduleResolution": "bundler",

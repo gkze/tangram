@@ -4,8 +4,11 @@ import { host } from "./host.ts";
 import { error, log } from "./log.ts";
 import { start } from "./start.ts";
 import { init } from "./init.ts";
+import { TextDecoder, TextEncoder } from "./text.ts";
 
 Object.defineProperties(globalThis, {
+	TextDecoder: { value: TextDecoder, configurable: true, writable: true },
+	TextEncoder: { value: TextEncoder, configurable: true, writable: true },
 	console: {
 		value: { error, log },
 		configurable: true,
